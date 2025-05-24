@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/chzyer/readline"
 	"github.com/schollz/cli/v2"
+	"github.com/schollz/croc/v10/src/call"
 	"github.com/schollz/croc/v10/src/chat"
 	"github.com/schollz/croc/v10/src/comm"
 	"github.com/schollz/croc/v10/src/croc"
@@ -126,6 +129,65 @@ func Run() (err error) {
 				// Ensure chat mode by setting the IsChat flag.
 				// chat.StartChat will build the Options with IsChat true.
 				return chat.StartChat(c, code) // inside chat.StartChat, options.IsChat should be set.
+			},
+		},
+		{
+			Name:        "audio",
+			Usage:       "start an audio call with a peer using a shared code",
+			Description: "initiate audio calling via the relay",
+			HelpName:    "croc audio",
+			Flags: []cli.Flag{
+				&cli.StringFlag{Name: "code", Usage: "code for the call"},
+				// you may add other call-specific flags here
+			},
+			Action: func(c *cli.Context) error {
+				options := croc.Options{
+					SharedSecret:  c.String("code"),
+					IsSender:      true, // caller initiates call
+					Debug:         c.Bool("debug"),
+					RelayAddress:  c.String("relay"),
+					RelayAddress6: c.String("relay6"),
+					RelayPassword: c.String("pass"),
+				}
+				// If no code is provided, prompt the user.
+				if options.SharedSecret == "" {
+					fmt.Print("Enter call code: ")
+					options.SharedSecret = strings.TrimSpace(utils.GetInput(""))
+				}
+				// Generate room name as done in chat
+
+				hashExtra := "croc"
+				roomNameBytes := sha256.Sum256([]byte(options.SharedSecret + hashExtra))
+				options.RoomName = hex.EncodeToString(roomNameBytes[:])
+				return call.StartAudioCall(options)
+			},
+		},
+		{
+			Name:        "video",
+			Usage:       "start a video call with a peer using a shared code",
+			Description: "initiate video calling via the relay",
+			HelpName:    "croc video",
+			Flags: []cli.Flag{
+				&cli.StringFlag{Name: "code", Usage: "code for the call"},
+				// additional video call flags can be added here
+			},
+			Action: func(c *cli.Context) error {
+				options := croc.Options{
+					SharedSecret:  c.String("code"),
+					IsSender:      true,
+					Debug:         c.Bool("debug"),
+					RelayAddress:  c.String("relay"),
+					RelayAddress6: c.String("relay6"),
+					RelayPassword: c.String("pass"),
+				}
+				if options.SharedSecret == "" {
+					fmt.Print("Enter call code: ")
+					options.SharedSecret = strings.TrimSpace(utils.GetInput(""))
+				}
+				hashExtra := "croc"
+				roomNameBytes := sha256.Sum256([]byte(options.SharedSecret + hashExtra))
+				options.RoomName = hex.EncodeToString(roomNameBytes[:])
+				return call.StartVideoCall(options)
 			},
 		},
 	}
