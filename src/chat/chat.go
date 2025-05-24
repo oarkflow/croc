@@ -50,13 +50,27 @@ func StartChat(cCtx *cli.Context, code string) error {
 	fmt.Printf("Joined chat room '%s'. Type your messages and press enter to send.\n", options.RoomName)
 	fmt.Println("To send a file, type '/sendfile <filepath>'")
 
-	// Start a goroutine to receive chat messages and files.
+	// Start a goroutine to receive chat messages and files with reconnection
 	go func() {
 		for {
 			data, err := conn.Receive()
 			if err != nil {
 				log.Errorf("error receiving message: %v", err)
-				return
+				fmt.Println("Peer disconnected. Waiting for new connection...")
+				// reconnect loop
+				for {
+					newConn, newBanner, newIp, errReconnect := tcp.ConnectToTCPServer(options.RelayAddress, options.RelayPassword, options.RoomName, 30*time.Second)
+					if errReconnect != nil {
+						log.Errorf("reconnect failed: %v", errReconnect)
+						time.Sleep(5 * time.Second)
+						continue
+					}
+					banner = newBanner
+					conn = newConn
+					fmt.Printf("Reconnected to chat room '%s' at %s.\n", options.RoomName, newIp)
+					break
+				}
+				continue
 			}
 			// assume chat messages are sent as JSON encoded with type "chat"
 			var m message.Message
