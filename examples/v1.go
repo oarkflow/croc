@@ -53,10 +53,6 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	codecSelector := mediadevices.NewCodecSelector(
-		mediadevices.WithVideoEncoders(&x264Params),
-		mediadevices.WithAudioEncoders(&opusParams),
-	)
 	videoStream, _ := mediadevices.GetUserMedia(mediadevices.MediaStreamConstraints{
 		Video: func(c *mediadevices.MediaTrackConstraints) {
 			c.Width = prop.Int(600)
@@ -65,13 +61,18 @@ func main() {
 		Audio: func(c *mediadevices.MediaTrackConstraints) {
 			// removed codec assignment
 		},
-		Codec: codecSelector,
+		Codec: mediadevices.NewCodecSelector(
+			mediadevices.WithVideoEncoders(&x264Params),
+			mediadevices.WithAudioEncoders(&opusParams),
+		),
 	}) // added audio encoder option
 	audioStream, _ := mediadevices.GetUserMedia(mediadevices.MediaStreamConstraints{
 		Audio: func(c *mediadevices.MediaTrackConstraints) {
 			// removed codec assignment
 		},
-		Codec: codecSelector,
+		Codec: mediadevices.NewCodecSelector(
+			mediadevices.WithAudioEncoders(&opusParams),
+		),
 	})
 	if videoStream != nil {
 		for _, track := range videoStream.GetTracks() {
