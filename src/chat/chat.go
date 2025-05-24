@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -46,24 +48,38 @@ func StartChat(cCtx *cli.Context, code string) error {
 	}
 	log.Debugf("chat connection established: banner='%s', externalIP=%s", banner, ip)
 	fmt.Printf("Joined chat room '%s'. Type your messages and press enter to send.\n", options.RoomName)
+	fmt.Println("To send a file, type '/sendfile <filepath>'")
 
-	// Start a goroutine to receive chat messages
+	// Start a goroutine to receive chat messages and files.
 	go func() {
 		for {
 			data, err := conn.Receive()
 			if err != nil {
-				log.Errorf("error receiving chat message: %v", err)
+				log.Errorf("error receiving message: %v", err)
 				return
 			}
 			// assume chat messages are sent as JSON encoded with type "chat"
 			var m message.Message
 			err = json.Unmarshal(data, &m)
 			if err != nil {
-				log.Debugf("failed to unmarshal chat message: %v", err)
+				log.Debugf("failed to unmarshal message: %v", err)
 				continue
 			}
 			if m.Type == "chat" {
 				fmt.Printf("[Peer]: %s\n", m.Message)
+			} else if m.Type == "chatfile" {
+				// m.Message holds the file name; m.Bytes holds file contents.
+				recvDir := "chat_received_files"
+				os.MkdirAll(recvDir, 0755)
+				filePath := filepath.Join(recvDir, m.Message)
+				err = os.WriteFile(filePath, m.Bytes, 0644)
+				if err != nil {
+					fmt.Printf("Failed to save file '%s': %v\n", m.Message, err)
+				} else {
+					fmt.Printf("[Peer] sent file '%s'. Saved to %s\n", m.Message, filePath)
+				}
+			} else {
+				fmt.Printf("[Peer unknown]: %s\n", m.Message)
 			}
 		}
 	}()
@@ -87,19 +103,47 @@ func StartChat(cCtx *cli.Context, code string) error {
 		if line == "" {
 			continue
 		}
-		chatMsg := message.Message{
-			Type:    "chat",
-			Message: line,
-		}
-		data, err := json.Marshal(chatMsg)
-		if err != nil {
-			log.Errorf("error marshaling chat message: %v", err)
-			continue
-		}
-		err = conn.Send(data)
-		if err != nil {
-			log.Errorf("error sending chat message: %v", err)
-			continue
+		// If input starts with /sendfile, then send file.
+		if strings.HasPrefix(line, "/sendfile ") {
+			filePath := strings.TrimSpace(strings.TrimPrefix(line, "/sendfile "))
+			// Read file content.
+			content, err := os.ReadFile(filePath)
+			if err != nil {
+				fmt.Printf("Error reading file %s: %v\n", filePath, err)
+				continue
+			}
+			// Extract file name.
+			_, fname := filepath.Split(filePath)
+			chatFileMsg := message.Message{
+				Type:    "chatfile",
+				Message: fname,
+				Bytes:   content,
+			}
+			data, err := json.Marshal(chatFileMsg)
+			if err != nil {
+				log.Errorf("error marshaling file message: %v", err)
+				continue
+			}
+			err = conn.Send(data)
+			if err != nil {
+				log.Errorf("error sending file message: %v", err)
+			}
+			fmt.Printf("Sent file '%s'\n", fname)
+		} else {
+			chatMsg := message.Message{
+				Type:    "chat",
+				Message: line,
+			}
+			data, err := json.Marshal(chatMsg)
+			if err != nil {
+				log.Errorf("error marshaling chat message: %v", err)
+				continue
+			}
+			err = conn.Send(data)
+			if err != nil {
+				log.Errorf("error sending chat message: %v", err)
+				continue
+			}
 		}
 	}
 	return nil
