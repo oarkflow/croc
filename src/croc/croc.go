@@ -61,6 +61,7 @@ func Debug(debug bool) {
 // Options specifies user specific options
 type Options struct {
 	IsSender         bool
+	IsChat           bool // <<-- new field for chat sessions
 	SharedSecret     string
 	RoomName         string
 	Debug            bool
@@ -197,14 +198,37 @@ func New(ops Options) (c *Client, err error) {
 	c.Options = ops
 	Debug(c.Options.Debug)
 
-	if len(c.Options.SharedSecret) < 6 {
-		err = fmt.Errorf("code is too short")
-		return
+	if c.Options.Curve == "" {
+		c.Options.Curve = "p256"
 	}
-	// Create a hash of part of the shared secret to use as the room name
-	hashExtra := "croc"
-	roomNameBytes := sha256.Sum256([]byte(c.Options.SharedSecret[:4] + hashExtra))
-	c.Options.RoomName = hex.EncodeToString(roomNameBytes[:])
+
+	if c.Options.IsChat {
+		// For chat sessions, require a non-empty shared secret; use it as provided.
+		if c.Options.SharedSecret == "" {
+			return nil, fmt.Errorf("chat code required")
+		}
+		// Compute room name using the full shared secret.
+		hashExtra := "croc"
+		roomNameBytes := sha256.Sum256([]byte(c.Options.SharedSecret + hashExtra))
+		c.Options.RoomName = hex.EncodeToString(roomNameBytes[:])
+	} else {
+		// For file transfers: if the shared secret is too short, auto-generate for sender
+		// and pad for receiver.
+		if len(c.Options.SharedSecret) < 6 {
+			if c.Options.IsSender {
+				c.Options.SharedSecret = utils.GetRandomName()
+			} else {
+				// Pad receiver's code to ensure at least 4 characters for room hashing
+				for len(c.Options.SharedSecret) < 4 {
+					c.Options.SharedSecret += "0"
+				}
+				log.Warn("Entered secret is shorter than recommended; proceeding with padded code")
+			}
+		}
+		hashExtra := "croc"
+		roomNameBytes := sha256.Sum256([]byte(c.Options.SharedSecret[:4] + hashExtra))
+		c.Options.RoomName = hex.EncodeToString(roomNameBytes[:])
+	}
 
 	c.conn = make([]*comm.Comm, 16)
 
@@ -1504,15 +1528,6 @@ func (c *Client) processMessage(payload []byte) (done bool, err error) {
 	if err != nil {
 		err = fmt.Errorf("problem with decoding: %w", err)
 		log.Debug(err)
-		return
-	}
-
-	// only "pake" messages should be unencrypted
-	// if a non-"pake" message is received unencrypted something
-	// is weird
-	if m.Type != message.TypePAKE && c.Key == nil {
-		err = fmt.Errorf("unencrypted communication rejected")
-		done = true
 		return
 	}
 

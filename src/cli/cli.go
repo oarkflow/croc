@@ -15,6 +15,7 @@ import (
 
 	"github.com/chzyer/readline"
 	"github.com/schollz/cli/v2"
+	"github.com/schollz/croc/v10/src/chat"
 	"github.com/schollz/croc/v10/src/comm"
 	"github.com/schollz/croc/v10/src/croc"
 	"github.com/schollz/croc/v10/src/mnemonicode"
@@ -94,6 +95,37 @@ func Run() (err error) {
 				&cli.StringFlag{Name: "ports", Value: "9009,9010,9011,9012,9013", Usage: "ports of the relay"},
 				&cli.IntFlag{Name: "port", Value: 9009, Usage: "base port for the relay"},
 				&cli.IntFlag{Name: "transfers", Value: 5, Usage: "number of ports to use for relay"},
+			},
+		},
+		{
+			Name:        "chat",
+			Usage:       "start a chat session using a shared code",
+			Description: "join a chat room by entering a code; no IP or port needed",
+			HelpName:    "croc chat",
+			Flags: []cli.Flag{
+				&cli.StringFlag{Name: "code", Usage: "code to enter"},
+			},
+			Action: func(c *cli.Context) error {
+				if c.Bool("debug") {
+					log.SetLevel("debug")
+				} else {
+					log.SetLevel("info")
+				}
+				// Get code from flag, argument, or env.
+				code := c.String("code")
+				if code == "" && c.Args().Present() {
+					code = c.Args().First()
+				}
+				if code == "" {
+					code = os.Getenv("CROC_SECRET")
+				}
+				if code == "" {
+					fmt.Print("Enter chat code: ")
+					code = strings.TrimSpace(utils.GetInput(""))
+				}
+				// Ensure chat mode by setting the IsChat flag.
+				// chat.StartChat will build the Options with IsChat true.
+				return chat.StartChat(c, code) // inside chat.StartChat, options.IsChat should be set.
 			},
 		},
 	}
