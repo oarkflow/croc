@@ -25,3 +25,4 @@ vendor
 .env
 .idea
 .history
+.DS_Store

@@ -6,8 +6,6 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/chzyer/readline v1.5.1
 	github.com/denisbrodbeck/machineid v1.0.1
-	github.com/go-audio/audio v1.0.0
-	github.com/go-audio/wav v1.1.0
 	github.com/kalafut/imohash v1.1.0
 	github.com/magisterquis/connectproxy v0.0.0-20200725203833-3582e84f0c9b
 	github.com/minio/highwayhash v1.0.3
@@ -30,7 +28,6 @@ require (
 require (
 	github.com/blackjack/webcam v0.6.1 // indirect
 	github.com/gen2brain/malgo v0.11.23 // indirect
-	github.com/go-audio/riff v1.0.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/pion/datachannel v1.5.10 // indirect
 	github.com/pion/dtls/v3 v3.0.4 // indirect
@@ -55,7 +52,6 @@ require (
 	github.com/cpuguy83/go-md2man/v2 v2.0.7 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/gordonklaus/portaudio v0.0.0-20250206071425-98a94950218b
-	github.com/hraban/opus v0.0.0-20230925203106-0188a62cb302
 	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db // indirect
 	github.com/pion/mediadevices v0.7.1
 	github.com/pmezard/go-difflib v1.0.0 // indirect
@@ -63,7 +59,6 @@ require (
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/tscholl2/siec v0.0.0-20240310163802-c2c6f6198406 // indirect
 	github.com/twmb/murmur3 v1.1.8 // indirect
-	gopkg.in/hraban/opus.v2 v2.0.0-20230925203106-0188a62cb302
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 

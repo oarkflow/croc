@@ -27,6 +27,7 @@ const (
 type Message struct {
 	Type    Type   `json:"t,omitempty"`
 	Message string `json:"m,omitempty"`
+	Alias   string `json:"a,omitempty"`
 	Bytes   []byte `json:"b,omitempty"`
 	Bytes2  []byte `json:"b2,omitempty"`
 	Num     int    `json:"n,omitempty"`
