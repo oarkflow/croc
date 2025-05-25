@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"bufio"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -68,6 +69,26 @@ func decrypt(cipherHex, key string) (string, error) {
 	return string(plainText), nil
 }
 
+// ANSI color codes.
+const (
+	ResetColor   = "\033[0m"
+	BlueColor    = "\033[34m"
+	GreenColor   = "\033[32m"
+	YellowColor  = "\033[33m"
+	MagentaColor = "\033[35m"
+	CyanColor    = "\033[36m"
+)
+
+// Helper to wrap text in color.
+func colorText(text, color string) string {
+	return fmt.Sprintf("%s%s%s", color, text, ResetColor)
+}
+
+// Helper to get current timestamp.
+func timestamp() string {
+	return colorText(time.Now().Format("15:04:05"), YellowColor)
+}
+
 // StartChat initiates a chat session using the given shared code.
 // It uses a relay connection (configured via the croc options) and creates a room
 // based solely on the shared code.
@@ -104,7 +125,17 @@ func StartChat(cCtx *cli.Context, code string) error {
 	var myAlias string
 	fmt.Print("Enter your alias: ")
 	fmt.Scanln(&myAlias)
-	fmt.Printf("Your alias is set to '%s'\n", myAlias)
+	fmt.Printf("Your alias is set to '%s'\n", colorText(myAlias, GreenColor))
+
+	// Setup readline with a fancy dynamic prompt.
+	rlPrompt := fmt.Sprintf("%s %s> ", timestamp(), colorText(myAlias, GreenColor))
+	rl, err := readline.NewEx(&readline.Config{
+		Prompt: rlPrompt,
+	})
+	if err != nil {
+		return err
+	}
+	defer rl.Close()
 
 	// Start a goroutine to receive chat messages and files with reconnection
 	go func() {
@@ -112,7 +143,8 @@ func StartChat(cCtx *cli.Context, code string) error {
 			data, err := conn.Receive()
 			if err != nil {
 				log.Errorf("error receiving message: %v", err)
-				fmt.Println("Peer disconnected. Waiting for new connection...")
+				rl.Write([]byte("\nPeer disconnected. Waiting for new connection...\n"))
+				rl.Refresh()
 				// reconnect loop
 				for {
 					newConn, newBanner, newIp, errReconnect := tcp.ConnectToTCPServer(options.RelayAddress, options.RelayPassword, options.RoomName, 30*time.Second)
@@ -123,65 +155,79 @@ func StartChat(cCtx *cli.Context, code string) error {
 					}
 					banner = newBanner
 					conn = newConn
-					fmt.Printf("Reconnected to chat room '%s' at %s.\n", options.RoomName, newIp)
+					rl.Write([]byte(fmt.Sprintf("\nReconnected to chat room '%s' at %s.\n", options.RoomName, newIp)))
+					rl.Refresh()
 					break
 				}
 				continue
 			}
-			// assume chat messages are sent as JSON encoded with type "chat"
 			var m message.Message
 			err = json.Unmarshal(data, &m)
 			if err != nil {
 				log.Debugf("failed to unmarshal message: %v", err)
 				continue
 			}
-			// Display alias on left side.
 			alias := m.Alias
 			if alias == "" {
 				alias = "Peer"
 			}
 			switch m.Type {
 			case "chat":
-				fmt.Printf("[%s]: %s\n", alias, m.Message)
+				msg := fmt.Sprintf("%s [%s]: %s", timestamp(), colorText(alias, BlueColor), m.Message)
+				rl.Write([]byte("\n" + msg + "\n"))
+				rl.Refresh()
 			case "chatfile":
-				// m.Message holds the file name; m.Bytes holds file contents.
-				recvDir := "chat_received_files"
-				os.MkdirAll(recvDir, 0755)
-				filePath := filepath.Join(recvDir, m.Message)
+				// Using bufio to prompt for file acceptance and save location.
+				reader := bufio.NewReader(os.Stdin)
+				rl.Write([]byte(fmt.Sprintf("\n%s [%s] wants to send file '%s'. Accept file? (yes/no): ", timestamp(), colorText(alias, BlueColor), m.Message)))
+				rl.Refresh()
+				resp, _ := reader.ReadString('\n')
+				resp = strings.TrimSpace(resp)
+				if strings.ToLower(resp) != "yes" {
+					rl.Write([]byte("File transfer declined.\n"))
+					rl.Refresh()
+					continue
+				}
+				rl.Write([]byte("Enter directory to save file: "))
+				rl.Refresh()
+				saveDir, _ := reader.ReadString('\n')
+				saveDir = strings.TrimSpace(saveDir)
+				if saveDir == "" {
+					saveDir = "chat_received_files"
+				}
+				os.MkdirAll(saveDir, 0755)
+				filePath := filepath.Join(saveDir, m.Message)
 				err = os.WriteFile(filePath, m.Bytes, 0644)
 				if err != nil {
-					fmt.Printf("Failed to save file '%s': %v\n", m.Message, err)
+					rl.Write([]byte(fmt.Sprintf("Failed to save file '%s': %v\n", m.Message, err)))
 				} else {
-					fmt.Printf("[%s] sent file '%s'. Saved to %s\n", alias, m.Message, filePath)
+					rl.Write([]byte(fmt.Sprintf("%s [%s] sent file '%s'. Saved to %s\n", timestamp(), colorText(alias, BlueColor), m.Message, filePath)))
 				}
+				rl.Refresh()
 			case "encrypted":
-				// Prompt for decryption key.
-				fmt.Printf("Encrypted message from [%s]. Enter decryption key: ", alias)
-				var key string
-				fmt.Scanln(&key)
+				reader := bufio.NewReader(os.Stdin)
+				rl.Write([]byte(fmt.Sprintf("\n%s Encrypted message from [%s]. Enter decryption key: ", timestamp(), colorText(alias, BlueColor))))
+				rl.Refresh()
+				key, _ := reader.ReadString('\n')
+				key = strings.TrimSpace(key)
 				plain, err := decrypt(m.Message, key)
 				if err != nil {
-					fmt.Printf("Failed to decrypt message: %v\n", err)
+					rl.Write([]byte(fmt.Sprintf("Failed to decrypt message: %v\n", err)))
 				} else {
-					fmt.Printf("[%s]: %s\n", alias, plain)
+					rl.Write([]byte(fmt.Sprintf("%s [%s]: %s\n", timestamp(), colorText(alias, BlueColor), plain)))
 				}
+				rl.Refresh()
 			default:
-				fmt.Printf("[%s unknown]: %s\n", alias, m.Message)
+				msg := fmt.Sprintf("%s [%s unknown]: %s", timestamp(), colorText(alias, BlueColor), m.Message)
+				rl.Write([]byte("\n" + msg + "\n"))
+				rl.Refresh()
 			}
 		}
 	}()
 
-	// Use readline to get input from the keyboard.
-	rl, err := readline.NewEx(&readline.Config{
-		Prompt: "> ",
-	})
-	if err != nil {
-		return err
-	}
-	defer rl.Close()
-
-	// Loop: read a line and send it as a chat message.
+	// Chat input loop with dynamic prompt update.
 	for {
+		rl.SetPrompt(fmt.Sprintf("%s %s> ", timestamp(), colorText(myAlias, GreenColor)))
 		line, err := rl.Readline()
 		if err != nil {
 			break
@@ -193,7 +239,7 @@ func StartChat(cCtx *cli.Context, code string) error {
 		// Allow updating alias.
 		if strings.HasPrefix(line, "/setalias ") {
 			myAlias = strings.TrimSpace(strings.TrimPrefix(line, "/setalias "))
-			fmt.Printf("Alias updated to '%s'\n", myAlias)
+			fmt.Printf("Alias updated to '%s'\n", colorText(myAlias, GreenColor))
 			continue
 		}
 		// Send encrypted message.
@@ -220,8 +266,7 @@ func StartChat(cCtx *cli.Context, code string) error {
 				log.Errorf("error marshaling encrypted message: %v", err)
 				continue
 			}
-			err = conn.Send(data)
-			if err != nil {
+			if err = conn.Send(data); err != nil {
 				log.Errorf("error sending encrypted message: %v", err)
 			}
 			continue
