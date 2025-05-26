@@ -31,10 +31,8 @@ type server struct {
 }
 
 type roomInfo struct {
-	first  *comm.Comm
-	second *comm.Comm
+	conns  []*comm.Comm
 	opened time.Time
-	full   bool
 }
 
 type roomMap struct {
@@ -163,13 +161,13 @@ func (s *server) run() (err error) {
 					return
 				}
 				log.Debugf("room: %+v", s.rooms.rooms[room])
-				if s.rooms.rooms[room].first != nil && s.rooms.rooms[room].second != nil {
+				if s.rooms.rooms[room].conns != nil {
 					log.Debug("rooms ready")
 					s.rooms.Unlock()
 					break
 				} else {
-					if s.rooms.rooms[room].first != nil {
-						errSend := s.rooms.rooms[room].first.Send([]byte{1})
+					if s.rooms.rooms[room].conns != nil {
+						errSend := s.rooms.rooms[room].conns[0].Send([]byte{1})
 						if errSend != nil {
 							log.Debug(errSend)
 							deleteIt = true
@@ -309,78 +307,84 @@ func (s *server) clientCommunication(port string, c *comm.Comm) (room string, er
 	room = string(roomBytes)
 
 	s.rooms.Lock()
-	// create the room if it is new
-	if _, ok := s.rooms.rooms[room]; !ok {
+	if r, ok := s.rooms.rooms[room]; !ok {
+		// Create a new room with this connection.
 		s.rooms.rooms[room] = roomInfo{
-			first:  c,
+			conns:  []*comm.Comm{c},
 			opened: time.Now(),
 		}
 		s.rooms.Unlock()
-		// tell the client that they got the room
-
-		bSend, err = crypt.Encrypt([]byte("ok"), strongKeyForEncryption)
-		if err != nil {
+		bSend, err1 := crypt.Encrypt([]byte("ok"), strongKeyForEncryption)
+		if err1 != nil {
+			err = fmt.Errorf("encryption error: %w", err1)
 			return
 		}
-		err = c.Send(bSend)
-		if err != nil {
-			log.Error(err)
-			s.deleteRoom(room)
+		if err = c.Send(bSend); err != nil {
 			return
 		}
-		log.Debugf("room %s has 1", room)
-		return
-	}
-	if s.rooms.rooms[room].full {
+		log.Debugf("room %s created with 1 connection", room)
+	} else {
+		// Append new connection.
+		r.conns = append(r.conns, c)
+		s.rooms.rooms[room] = r
 		s.rooms.Unlock()
-		bSend, err = crypt.Encrypt([]byte("room full"), strongKeyForEncryption)
-		if err != nil {
+		bSend, err1 := crypt.Encrypt([]byte("ok"), strongKeyForEncryption)
+		if err1 != nil {
+
 			return
 		}
-		err = c.Send(bSend)
-		if err != nil {
-			log.Error(err)
+		if err = c.Send(bSend); err != nil {
+			// On error, remove connection.
+			s.deleteConnFromRoom(room, c)
 			return
 		}
-		return
+		log.Debugf("added new connection to room %s; total connections: %d", room, len(r.conns))
 	}
-	log.Debugf("room %s has 2", room)
-	s.rooms.rooms[room] = roomInfo{
-		first:  s.rooms.rooms[room].first,
-		second: c,
-		opened: s.rooms.rooms[room].opened,
-		full:   true,
-	}
-	otherConnection := s.rooms.rooms[room].first
-	s.rooms.Unlock()
 
-	// second connection is the sender, time to staple connections
-	var wg sync.WaitGroup
-	wg.Add(1)
-
-	// start piping
-	go func(com1, com2 *comm.Comm, wg *sync.WaitGroup) {
-		log.Debug("starting pipes")
-		pipe(com1.Connection(), com2.Connection())
-		wg.Done()
-		log.Debug("done piping")
-	}(otherConnection, c, &wg)
-
-	// tell the sender everything is ready
-	bSend, err = crypt.Encrypt([]byte("ok"), strongKeyForEncryption)
-	if err != nil {
-		return
-	}
-	err = c.Send(bSend)
-	if err != nil {
-		s.deleteRoom(room)
-		return
-	}
-	wg.Wait()
-
-	// delete room
-	s.deleteRoom(room)
+	// Start handling incoming messages from this connection.
+	go s.handleRoomConnection(room, c)
 	return
+}
+
+func (s *server) deleteConnFromRoom(room string, conn *comm.Comm) {
+	s.rooms.Lock()
+	defer s.rooms.Unlock()
+	if r, ok := s.rooms.rooms[room]; ok {
+		newConns := []*comm.Comm{}
+		for _, c := range r.conns {
+			if c != conn {
+				newConns = append(newConns, c)
+			}
+		}
+		if len(newConns) == 0 {
+			delete(s.rooms.rooms, room)
+		} else {
+			r.conns = newConns
+			s.rooms.rooms[room] = r
+		}
+	}
+}
+
+// New helper: read messages from a connection and broadcast them.
+func (s *server) handleRoomConnection(room string, sender *comm.Comm) {
+	for {
+		data, err := sender.Receive()
+		if err != nil {
+			log.Debugf("connection error in room %s: %v", room, err)
+			s.deleteConnFromRoom(room, sender)
+			return
+		}
+		// Broadcast to all other connections.
+		s.rooms.Lock()
+		if r, ok := s.rooms.rooms[room]; ok {
+			for _, conn := range r.conns {
+				if conn != sender {
+					_ = conn.Send(data) // errors are ignored per connection
+				}
+			}
+		}
+		s.rooms.Unlock()
+	}
 }
 
 func (s *server) deleteRoom(room string) {
@@ -390,13 +394,12 @@ func (s *server) deleteRoom(room string) {
 		return
 	}
 	log.Debugf("deleting room: %s", room)
-	if s.rooms.rooms[room].first != nil {
-		s.rooms.rooms[room].first.Close()
+	for _, conn := range s.rooms.rooms[room].conns {
+		if conn != nil {
+			conn.Close()
+		}
 	}
-	if s.rooms.rooms[room].second != nil {
-		s.rooms.rooms[room].second.Close()
-	}
-	s.rooms.rooms[room] = roomInfo{first: nil, second: nil}
+	s.rooms.rooms[room] = roomInfo{conns: nil}
 	delete(s.rooms.rooms, room)
 }
 
@@ -493,7 +496,7 @@ func ConnectToTCPServer(address, password, room string, timelimit ...time.Durati
 		log.Debug(err)
 		return
 	}
-
+	fmt.Println(address)
 	// get PAKE connection with server to establish strong key to transfer info
 	A, err := pake.InitCurve(weakKey, 0, "siec")
 	if err != nil {
